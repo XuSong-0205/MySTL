@@ -7,17 +7,17 @@
 
 #ifndef _SX_ITERATOR_H_
 #define _SX_ITERATOR_H_
-// #include <type_traits>
+#include <type_traits>		// is_constructible
 #include "sx_type_traits.h"
 
 SX_NAMESPACE_BEGIN
 
 // 五种迭代器类型
 struct input_iterator_tag {};
-struct output_iterator_tag : public input_iterator_tag {};
-struct forward_iterator_tag : public output_iterator_tag {};
-struct bidirectional_iterator_tag : public forward_iterator_tag {};
-struct random_access_iterator_tag : public bidirectional_iterator_tag {};
+struct output_iterator_tag {};
+struct forward_iterator_tag : output_iterator_tag {};
+struct bidirectional_iterator_tag : forward_iterator_tag {};
+struct random_access_iterator_tag : bidirectional_iterator_tag {};
 
 
 // 迭代器模板
@@ -34,18 +34,45 @@ template<class Category, class T, class Distance = ptrdiff_t,
 	using const_reference	= const reference;
 };
 
+
+namespace detail {
+	template<class T>
+	struct __has_iterator_category
+	{
+		template<class U> static int test(...);
+		template<class U> static char test(typename U::iterator_category*);
+		static constexpr bool value = sizeof(test<T>(nullptr)) == sizeof(char);
+	};
+
+	template<class Iterator, bool>
+	struct __iterator_traits_impl {};
+
+	template<class Iterator>
+	struct __iterator_traits_impl<Iterator, true>
+	{
+		using iterator_category = typename Iterator::iterator_category;
+		using value_type		= typename Iterator::value_type;
+		using difference_type	= typename Iterator::difference_type;
+		using pointer			= typename Iterator::pointer;
+		using reference			= typename Iterator::reference;
+		using const_pointer		= const pointer;
+		using const_reference	= const reference;
+	};
+
+	template<class Iterator, bool>
+	struct __iterator_traits_helper {};
+
+	template<class Iterator>
+	struct __iterator_traits_helper<Iterator, true> : __iterator_traits_impl<Iterator,
+		std::is_convertible_v<Iterator, input_iterator_tag> ||
+		std::is_convertible_v<Iterator, output_iterator_tag>> {};
+}
+
+
 // 萃取迭代器的某种类型
 template<class Iterator>
-struct iterator_traits
-{
-	using iterator_category = typename Iterator::iterator_category;
-	using value_type		= typename Iterator::value_type;
-	using difference_type	= typename Iterator::difference_type;
-	using pointer			= typename Iterator::pointer;
-	using reference			= typename Iterator::reference;
-	using const_pointer		= const pointer;
-	using const_reference	= const reference;
-};
+struct iterator_traits : detail::__iterator_traits_helper<Iterator, 
+	detail::__has_iterator_category<Iterator>::value> {};
 
 
 // 对原生指针进行偏特化
@@ -171,53 +198,31 @@ void advance(InputIterator& iter, Distance n)
 
 
 /**
- * 以下类模板在编译期确定该类型是否拥有 iterator_category 类型
- * 具体做法是通过静态模板函数的返回值大小确定是否与预期符合
- * 必须使用模板函数进行类型匹配测试，否则若没有相应类型，函数将在编译期报错
- * 若该类型拥有此种类型，静态模板函数将匹配它参数为该类型指针类型的函数
- * 否则根据函数重载将匹配另一个（不符合）
- * 设置这两个函数的返回值大小不同
- * 通过 sizeof 运算符在编译期进行判断是否与预期相符来判断是否拥有此类型
- */
-template<class T>
-struct has_iterator_category
-{
-private:
-	template<class U> static int test(...);
-	template<class U> static char test(typename U::iterator_category* = nullptr);
-public:
-	static constexpr bool value = sizeof(test<T>(nullptr)) == sizeof(char);
-};
-
-
-/**
  * 若有类型 iterator_category 判断其是否为其中某一迭代器类型
  * 以下用来判断是否是某一迭代器
  * 最后给出一个判断是否符合标准的迭代器
  */
-template<class T, class U, bool b = has_iterator_category<has_iterator_category<T>>::value>
-struct has_iterator_category_of : public sx_bool_constant<std::is_convertible<
-	typename iterator_traits<T>::iterator_category, U>::value> {};
-
+template<class T, class U, bool b = detail::__has_iterator_category<iterator_traits<T>>::value>
+struct has_iterator_category_of : sx_bool_constant_t<std::is_convertible_v<iterator_traits<T>, U>> {};
 
 template<class T, class U>
-struct has_iterator_category_of<T, U, false> : public sx_false_type {};
+struct has_iterator_category_of<T, U, false> : sx_false_type {};
 
 
 template<class Iterator>
-struct is_input_iterator : public has_iterator_category_of<Iterator, input_iterator_tag> {};
+struct is_input_iterator : has_iterator_category_of<Iterator, input_iterator_tag> {};
 
 template<class Iterator>
-struct is_output_iterator : public has_iterator_category_of<Iterator, output_iterator_tag> {};
+struct is_output_iterator : has_iterator_category_of<Iterator, output_iterator_tag> {};
 
 template<class Iterator>
-struct is_forward_iterator : public has_iterator_category_of<Iterator, forward_iterator_tag> {};
+struct is_forward_iterator : has_iterator_category_of<Iterator, forward_iterator_tag> {};
 
 template<class Iterator>
-struct is_bidirectional_iterator : public has_iterator_category_of<Iterator, bidirectional_iterator_tag> {};
+struct is_bidirectional_iterator : has_iterator_category_of<Iterator, bidirectional_iterator_tag> {};
 
 template<class Iterator>
-struct is_random_access_iterator : public has_iterator_category_of<Iterator, random_access_iterator_tag> {};
+struct is_random_access_iterator : has_iterator_category_of<Iterator, random_access_iterator_tag> {};
 
 template<class Iterator>
 struct is_iterator : public sx_bool_constant<
@@ -231,9 +236,142 @@ struct is_iterator : public sx_bool_constant<
 template<class Iterator>
 class reverse_iterator
 {
+private:
+	Iterator current;
 
+public:
+	using iterator_category = typename iterator_traits<Iterator>::iterator_category;
+	using value_type		= typename iterator_traits<Iterator>::value_type;
+	using difference_type	= typename iterator_traits<Iterator>::difference_type;
+	using pointer			= typename iterator_traits<Iterator>::pointer;
+	using reference			= typename iterator_traits<Iterator>::reference;
+	using const_pointer		= const pointer;
+	using const_reference	= const reference;
+
+	using iterator_type		= Iterator;
+	using reverse_iterator<iterator_type> = self;
+
+public:
+	reverse_iterator() {}
+	explicit reverse_iterator(iterator_type iter) : current (iter) {}
+	reverse_iterator(const self& rhs) : current(rhs.current) {}
+
+	// 取出正向迭代器
+	iterator_type base()const 
+	{ 
+		return current; 
+	}
+
+	// 重载操作符
+	// 实际对应正向迭代器的前一个位置
+	reference operator*()const
+	{
+		auto temp = current;
+		return *--temp;
+	}
+
+	pointer operator->()const 
+	{
+		return &(operator*());
+	}
+
+	// 前进(++)变为后退(--)
+	self& operator++()
+	{
+		--current;
+		reutrn* this;
+	}
+
+	self operator++(int)
+	{
+		auto temp = *this;
+		--current;
+		return temp;
+	}
+
+	// 后退(--)变为前进(++)
+	self& operator--()
+	{
+		++current;
+		return *this;
+	}
+
+	self operator--(int)
+	{
+		auto temp = *this;
+		++current;
+		return temp;
+	}
+
+	self& operator+=(difference_type n)
+	{
+		// 使用此头文件中的全局函数，对不同类型的迭代器选取不同的策略执行
+		advance(current, -n);
+		return *this;
+	}
+
+	self operator+(difference_type n)const
+	{
+		auto temp = current;
+		advance(temp, -n);
+		return *temp;
+	}
+
+	self& operator-=(difference_type n)
+	{
+		advance(current, n);
+		return *this;
+	}
+
+	self operator-(difference_type n)const
+	{
+		auto temp = current;
+		advance(temp, n);
+		return *temp;
+	}
+
+	self& operator[](difference_type n)
+	{
+		return *(*this + n);
+	}
+
+	// 对operator-() 的重载
+	difference_type operator-(const self& rhs)const
+	{
+		// 使用全局函数 distance() 进行实现
+		return distance(rhs.current, current);
+	}
+
+	bool operator==(const self& rhs)const
+	{
+		return base() == rhs.base();
+	}
+
+	bool operator!=(const self& rhs)const
+	{
+		return !(*this == rhs);
+	}
+
+	bool operator<(const self& rhs)const
+	{
+		return rhs.base() < base();
+	}
+
+	bool operator<=(const self& rhs)const
+	{
+		return rhs < *this || rhs == *this;
+	}
+
+	bool operator>(const self& rhs)const
+	{
+		return !(rhs <= *this);
+	}
+
+	bool operator>=(const self& rhs)const
+	{
+		return !(rhs < *this);
+	}
 };
-
 
 SX_NAMESPACE_END
 #endif	// end define _SX_ITERATOR_H_
